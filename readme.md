@@ -1,0 +1,1 @@
+This repo contains the tools required for seamless talepad functionality. It also contains the research done and benchmarks for the tools created.
