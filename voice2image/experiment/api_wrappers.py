@@ -138,3 +138,100 @@ class StabilityAITtiApi(TtiApi):
             cost_per_run_usd=self.cost,
             error_message=error_msg
         )
+
+class LocalSDXLTurbo(TtiApi):
+    """Wrapper for local SDXL Turbo inference on RTX 4070 Ti."""
+    
+    def __init__(self, model_name="stabilityai/sdxl-turbo"):
+        import torch
+        from diffusers import AutoPipelineForText2Image
+
+        super().__init__(model_name=model_name, provider="local_gpu_4070ti")
+        self.cost = 0.001 # Estimate for electricity/depreciation (negligible)
+        self.device = "cuda"
+        
+        if not torch.cuda.is_available():
+            raise EnvironmentError("PyTorch CUDA not available. Cannot run local GPU test.")
+        
+        # 1. Load the model with optimizations (only runs once)
+        print(f"Loading {self.model_name} to GPU (RTX 4070 Ti) with FP16...")
+        self.pipe = AutoPipelineForText2Image.from_pretrained(
+            self.model_name, 
+            torch_dtype=torch.float16,   # Use half-precision for speed/VRAM
+            variant="fp16",
+            use_safetensors=True
+        )
+        self.pipe.to(self.device)
+        
+        # 2. Apply Speed Enhancements
+        try:
+            # Enable xformers for memory-efficient attention (massive speedup)
+            self.pipe.enable_xformers_memory_efficient_attention() 
+            print("xFormers enabled.")
+        except Exception:
+            print("xFormers failed to load. Running without it.")
+
+        # 3. Compile UNet (PyTorch 2.0+ optimization - HUGE speedup after first run)
+        # Note: The first run will be slow due to compilation overhead.
+        # self.pipe.unet = torch.compile(self.pipe.unet, mode="reduce-overhead", fullgraph=True)
+        # We skip this for now to keep the first inference time predictable.
+        
+        print("Local model loaded successfully.")
+
+    async def generate_image(self, prompt: str) -> ExperimentResult:
+        start_time = time.monotonic()
+        image_result = ""
+        error_msg = ""
+        
+        # Define the synchronous inference function
+        def sync_inference(p):
+            from io import BytesIO
+            
+            # --- Aggressive Speed Settings for Turbo ---
+            image = self.pipe(
+                prompt=f"Cartoon, Storybook, fun, colorful - {p}",
+                num_inference_steps=2,      # Key to Turbo speed
+                guidance_scale=0.0,         # Key to Turbo speed
+                width=1280,
+                height=640
+            ).images[0]
+            
+            # Convert PIL image to Base64 (serving format)
+            buffer = BytesIO()
+            # Save as WEBP for smaller size / faster transfer if sent over a network later
+            image.save(buffer, format="WEBP") 
+            base64_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
+            # Return a Data URL for the experiment result storage
+            # return f"data:image/webp;base64,{base64_data[:30]}..." 
+            return base64_data  # Return just the Base64 string for local saving
+            
+        try:
+            # Run the synchronous GPU work on a separate thread
+            image_result = await asyncio.to_thread(sync_inference, prompt) 
+            
+            # Since the image is generated locally, we save a file in the same thread:
+            # This is a placeholder, as the runner should handle saving, but we can verify it here
+            print(f"[Local GPU] Generated image data URL starting with: {image_result[:30]}")
+
+            image_path = await asyncio.to_thread(
+                    save_base64_image, 
+                    image_result, 
+                    self.provider, 
+                    str(time.time_ns()) # Use nanoseconds for a unique ID placeholder
+                )
+
+        except Exception as e:
+            error_msg = str(e)
+            
+        latency_ms = (time.monotonic() - start_time) * 1000
+
+        return ExperimentResult(
+            provider=self.provider,
+            model_name=self.model_name,
+            final_prompt=prompt,
+            latency_tti_ms=latency_ms,
+            image_url_or_data=image_result,
+            cost_per_run_usd=self.cost,
+            error_message=error_msg
+        )

@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from data_models import ExperimentResult, ExperimentReport
 from model_interfaces import TtiApi
-from api_wrappers import OpenAITtiApi, StabilityAITtiApi # Import your wrappers
+from api_wrappers import OpenAITtiApi, StabilityAITtiApi, LocalSDXLTurbo # Import your wrappers
 
 class BenchmarkRunner:
     def __init__(self, output_file="benchmark_results.csv"):
@@ -76,8 +76,9 @@ if __name__ == "__main__":
     # Remember to set your OPENAI_API_KEY and STABILITY_KEY environment variables!
     
     models_to_test = [
-        OpenAITtiApi(model_name="dall-e-3"),
-        StabilityAITtiApi(model_name="stable-diffusion-3.5-large-turbo"),
+        # OpenAITtiApi(model_name="dall-e-3"),
+        # StabilityAITtiApi(model_name="stable-diffusion-3.5-large-turbo"),
+        LocalSDXLTurbo()
         # You would add Gemini, Midjourney API, etc., here.
     ]
     
