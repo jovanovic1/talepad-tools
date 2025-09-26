@@ -506,3 +506,239 @@ class LocalLCMSDXL(TtiApi):
             cost_per_run_usd=self.cost,
             error_message=error_msg
         )
+
+# --- LDM (Latent Diffusion Model) Implementation ---
+class LocalLDM(TtiApi):
+    """Wrapper for local LDM inference on A100."""
+
+    def __init__(self, model_name="CompVis/ldm-text2im-large-256"):
+        import torch
+        from diffusers import LDMTextToImagePipeline
+
+        super().__init__(model_name=model_name, provider="local_gpu_a100")
+        self.cost = 0.001
+        self.device = "cuda"
+
+        if not torch.cuda.is_available():
+            raise EnvironmentError("PyTorch CUDA not available.")
+
+        print(f"Loading {self.model_name} LDM to GPU...")
+        self.pipe = LDMTextToImagePipeline.from_pretrained(
+            self.model_name,
+            torch_dtype=torch.float16,
+            use_safetensors=False  # LDM models often don't have safetensors
+        )
+        self.pipe.to(self.device)
+
+        try:
+            self.pipe.enable_xformers_memory_efficient_attention()
+            print("xFormers enabled for LDM.")
+        except Exception:
+            print("xFormers failed for LDM.")
+
+    async def generate_image(self, prompt: str, test_case_id: str = "T_unknown") -> ExperimentResult:
+        start_time = time.monotonic()
+        image_result = ""
+        error_msg = ""
+
+        def sync_inference(p):
+            from io import BytesIO
+
+            # LDM typically generates 256x256 images
+            image = self.pipe(
+                prompt=f"Cartoon, Storybook illustration - {p}",
+                num_inference_steps=50,
+                guidance_scale=7.5
+            ).images[0]
+
+            buffer = BytesIO()
+            image.save(buffer, format="WEBP")
+            base64_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            return base64_data
+
+        try:
+            image_result = await asyncio.to_thread(sync_inference, prompt)
+            image_path = await asyncio.to_thread(
+                save_base64_image,
+                image_result,
+                self.provider,
+                self.model_name,
+                test_case_id,
+                self.run_session_id or 'session_unknown'
+            )
+        except Exception as e:
+            error_msg = str(e)
+
+        latency_ms = (time.monotonic() - start_time) * 1000
+
+        return ExperimentResult(
+            provider=self.provider,
+            model_name=f"{self.model_name}-ldm",
+            final_prompt=prompt,
+            execution_type="local",
+            gpu_info="NVIDIA A100-SXM4-40GB",
+            latency_tti_ms=latency_ms,
+            image_url_or_data=image_result,
+            cost_per_run_usd=self.cost,
+            error_message=error_msg
+        )
+
+
+# --- Flux.1 Implementation ---
+class LocalFlux(TtiApi):
+    """Wrapper for local Flux.1 inference on A100."""
+
+    def __init__(self, model_name="black-forest-labs/FLUX.1-schnell", steps=4):
+        import torch
+        from diffusers import FluxPipeline
+
+        super().__init__(model_name=model_name, provider="local_gpu_a100")
+        self.cost = 0.002  # Larger model, more compute
+        self.device = "cuda"
+        self.steps = steps
+
+        if not torch.cuda.is_available():
+            raise EnvironmentError("PyTorch CUDA not available.")
+
+        print(f"Loading {self.model_name} Flux to GPU...")
+        self.pipe = FluxPipeline.from_pretrained(
+            self.model_name,
+            torch_dtype=torch.bfloat16,  # Flux often works better with bfloat16
+            use_safetensors=True
+        )
+        self.pipe.to(self.device)
+
+        try:
+            self.pipe.enable_xformers_memory_efficient_attention()
+            print("xFormers enabled for Flux.")
+        except Exception:
+            print("xFormers failed for Flux.")
+
+    async def generate_image(self, prompt: str, test_case_id: str = "T_unknown") -> ExperimentResult:
+        start_time = time.monotonic()
+        image_result = ""
+        error_msg = ""
+
+        def sync_inference(p):
+            from io import BytesIO
+
+            # Flux typically generates high-quality images
+            image = self.pipe(
+                prompt=f"Cartoon, Storybook, vibrant colors - {p}",
+                num_inference_steps=self.steps,
+                guidance_scale=1.0 if "schnell" in self.model_name else 7.5,
+                width=1024,
+                height=1024
+            ).images[0]
+
+            buffer = BytesIO()
+            image.save(buffer, format="WEBP")
+            base64_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            return base64_data
+
+        try:
+            image_result = await asyncio.to_thread(sync_inference, prompt)
+            image_path = await asyncio.to_thread(
+                save_base64_image,
+                image_result,
+                self.provider,
+                self.model_name,
+                test_case_id,
+                self.run_session_id or 'session_unknown'
+            )
+        except Exception as e:
+            error_msg = str(e)
+
+        latency_ms = (time.monotonic() - start_time) * 1000
+
+        return ExperimentResult(
+            provider=self.provider,
+            model_name=f"{self.model_name}-{self.steps}step",
+            final_prompt=prompt,
+            execution_type="local",
+            gpu_info="NVIDIA A100-SXM4-40GB",
+            latency_tti_ms=latency_ms,
+            image_url_or_data=image_result,
+            cost_per_run_usd=self.cost,
+            error_message=error_msg
+        )
+
+
+# --- Stable Diffusion v1.5 (LDM-based) Implementation ---
+class LocalStableDiffusion15(TtiApi):
+    """Wrapper for local Stable Diffusion v1.5 inference on A100."""
+
+    def __init__(self, model_name="runwayml/stable-diffusion-v1-5", steps=25):
+        import torch
+        from diffusers import StableDiffusionPipeline
+
+        super().__init__(model_name=model_name, provider="local_gpu_a100")
+        self.cost = 0.001
+        self.device = "cuda"
+        self.steps = steps
+
+        if not torch.cuda.is_available():
+            raise EnvironmentError("PyTorch CUDA not available.")
+
+        print(f"Loading {self.model_name} SD1.5 ({steps}-step) to GPU...")
+        self.pipe = StableDiffusionPipeline.from_pretrained(
+            self.model_name,
+            torch_dtype=torch.float16,
+            variant="fp16",
+            use_safetensors=True
+        )
+        self.pipe.to(self.device)
+
+        try:
+            self.pipe.enable_xformers_memory_efficient_attention()
+            print("xFormers enabled for SD1.5.")
+        except Exception:
+            print("xFormers failed for SD1.5.")
+
+    async def generate_image(self, prompt: str, test_case_id: str = "T_unknown") -> ExperimentResult:
+        start_time = time.monotonic()
+        image_result = ""
+        error_msg = ""
+
+        def sync_inference(p):
+            from io import BytesIO
+
+            image = self.pipe(
+                prompt=f"Cartoon, Storybook, highly detailed, colorful - {p}",
+                num_inference_steps=self.steps,
+                guidance_scale=7.5,
+                width=512,  # SD1.5 native resolution
+                height=512
+            ).images[0]
+
+            buffer = BytesIO()
+            image.save(buffer, format="WEBP")
+            base64_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            return base64_data
+
+        try:
+            image_result = await asyncio.to_thread(sync_inference, prompt)
+            image_path = await asyncio.to_thread(
+                save_base64_image,
+                image_result,
+                self.provider,
+                self.model_name,
+                test_case_id,
+                self.run_session_id or 'session_unknown'
+            )
+        except Exception as e:
+            error_msg = str(e)
+
+        latency_ms = (time.monotonic() - start_time) * 1000
+
+        return ExperimentResult(
+            provider=self.provider,
+            model_name=f"{self.model_name}-{self.steps}step",
+            final_prompt=prompt,
+            execution_type="local",
+            gpu_info="NVIDIA A100-SXM4-40GB",
+            latency_tti_ms=latency_ms,
+            image_url_or_data=image_result,
+            cost_per_run_usd=self.cost,
+            error_message=error_msg
+        )

@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from data_models import ExperimentResult, ExperimentReport
 from model_interfaces import TtiApi
-from api_wrappers import OpenAITtiApi, StabilityAITtiApi, LocalSDXLTurbo, LocalSDXLLightning, LocalSDXLBase, LocalLCMSDXL
+from api_wrappers import OpenAITtiApi, StabilityAITtiApi, LocalSDXLTurbo, LocalSDXLBase, LocalStableDiffusion15, LocalFlux
 
 class BenchmarkRunner:
     def __init__(self, output_file=None):
@@ -178,15 +178,20 @@ if __name__ == "__main__":
         # OpenAITtiApi(model_name="dall-e-3"),
         # StabilityAITtiApi(model_name="stable-diffusion-3.5-large-turbo"),
 
-        # Speed-focused models (fastest to slowest)
-        LocalSDXLTurbo(),                    # 2-step, fastest
-        # LocalSDXLLightning(steps=4),         # 4-step Lightning (model not found)
-        # LocalLCMSDXL(steps=4),               # 4-step LCM (model not found)
-        # LocalSDXLLightning(steps=8),         # 8-step Lightning (model not found)
+        # === SPEED-FOCUSED MODELS ===
+        LocalSDXLTurbo(),                    # 2-step, fastest SDXL
+        LocalStableDiffusion15(steps=10),    # SD 1.5 fast (512x512)
 
-        # Quality-focused models
-        LocalSDXLBase(steps=25),             # 25-step Base (balanced)
-        LocalSDXLBase(steps=50),             # 50-step Base (high quality)
+        # === BALANCED MODELS ===
+        LocalStableDiffusion15(steps=25),    # SD 1.5 standard (512x512)
+        LocalSDXLBase(steps=25),             # SDXL Base (1024x1024)
+
+        # === QUALITY-FOCUSED MODELS ===
+        LocalSDXLBase(steps=50),             # SDXL Base high quality
+        LocalFlux(model_name="black-forest-labs/FLUX.1-schnell", steps=1),  # Flux Schnell (1-step fast)
+
+        # Note: LDM models commented out due to model format incompatibility issues
+        # LocalLDM(),  # Model format incompatibility
     ]
     
     # --- 3. Run Experiments ---
